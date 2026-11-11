@@ -12562,10 +12562,12 @@ echo "AGENT_INSTALLED_OK"
                 'fence_agent': self._ha_fence_agent_status(),
                 'cluster_claim': self._ha_claim_status(),
             }
-            if ha.lease_in_force():
-                # automatic failover: recoveries a former leader left half done (5.6)
-                status['interrupted_recoveries'] = self.ha_interrupted_recoveries()
-            return status
+        # outside ha_lock: the recovery read takes the lock again (_ha_seen_since) and
+        # asks the cluster, so it cannot run inside the block above
+        if ha.lease_in_force():
+            # automatic failover: recoveries a former leader left half done (5.6)
+            status['interrupted_recoveries'] = self.ha_interrupted_recoveries()
+        return status
 
     def get_tasks(self, limit: int = 50, force: bool = False) -> List[Dict]:
         """get recent cluster tasks, newest first - MK
