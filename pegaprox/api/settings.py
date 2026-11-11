@@ -1158,31 +1158,34 @@ def rollback_pegaprox_update():
         if not os.path.exists(backup_path):
             return jsonify({'error': 'Backup not found'}), 404
         
-        current_dir = os.path.dirname(os.path.abspath(__file__))
-        current_backend = os.path.abspath(__file__)
-        current_frontend = os.path.join(current_dir, 'index.html')
-        
-        restored = []
-        
-        # Restore backend
-        backup_backend = None
-        for f in os.listdir(backup_path):
-            if f.endswith('.py'):
-                backup_backend = os.path.join(backup_path, f)
-                break
-        
-        if backup_backend and os.path.exists(backup_backend):
-            shutil.copy2(backup_backend, current_backend)
-            restored.append('backend')
-            logging.info(f"Restored backend from {backup_backend}")
-        
-        # Restore frontend
-        backup_frontend = os.path.join(backup_path, 'index.html')
-        if os.path.exists(backup_frontend):
-            shutil.copy2(backup_frontend, current_frontend)
-            restored.append('frontend')
-            logging.info(f"Restored frontend from {backup_frontend}")
-        
+        # The backup holds the trees the update wrote (pegaprox/, web/, static/) and three root
+        # files. Each one goes back to the path it came from, under the install directory.
+        install_dir = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+        restore_plan = []
+        for item in ['pegaprox', 'web', 'static']:
+            for root, _dirs, files in os.walk(os.path.join(backup_path, item)):
+                for f in files:
+                    src = os.path.join(root, f)
+                    restore_plan.append((src, os.path.relpath(src, backup_path)))
+        for f in ['pegaprox_multi_cluster.py', 'version.json', 'requirements.txt']:
+            if os.path.isfile(os.path.join(backup_path, f)):
+                restore_plan.append((os.path.join(backup_path, f), f))
+
+        # without the launcher and the settings module the install cannot start: nothing is written
+        restore_rels = {rel for _src, rel in restore_plan}
+        if not {'pegaprox_multi_cluster.py', os.path.join('pegaprox', 'api', 'settings.py')} <= restore_rels:
+            logging.warning(f"Rollback refused: backup {backup_name} holds no complete PegaProx install")
+            return jsonify({'error': 'Backup holds no complete PegaProx install'}), 400
+
+        for src, rel in restore_plan:
+            dst = os.path.join(install_dir, rel)
+            os.makedirs(os.path.dirname(dst), exist_ok=True)
+            shutil.copy2(src, dst)
+        # same two names as before: the Python side, and the page when the backup holds one
+        tops = {rel.split(os.sep)[0] for rel in restore_rels}
+        restored = ['backend'] + (['frontend'] if 'web' in tops else [])
+        logging.info(f"Restored {len(restore_plan)} files from {backup_path}")
+
         user = getattr(request, 'session', {}).get('user', 'system')
         log_audit(user, 'pegaprox.rollback', f"Rolled back to backup: {backup_name}")
         
